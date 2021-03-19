@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WomenTalk 2019</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.1/css/bulma.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.0/axios.min.js"></script>
+    <style type="text/css">
+    em {
+        background-color: black;
+        color: white;
+    }
+
+    em.yellow {
+        background-color: #ffc307;
+        color: black;
+    }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <section class="section">
+            <div class="container">
+                <h1 class="title">
+                    回文/回回文 Adjacency Pair 語料庫
+                </h1>
+                <p class="subtitle">
+                    測試語料：WomenTalk版 2019年
+                </p>
+            </div>
+        </section>
+        <section class="section">
+            <div class="container">
+                <div class="field is-horizontal">
+                    <div class="field-body">
+                        <div class="field">
+                            <p class="control is-expanded">
+                                <input v-model="query_word" class="input" type="text" placeholder="請輸入搜尋關鍵字">
+                            </p>
+                        </div>
+                        <div class="field">
+                            <p class="control is-expanded">
+                                <div class="select">
+                                    <select v-model="selected">
+                                        <option value="initiator">回文 (first)</option>
+                                        <option value="replier">原po的回回文 (second)</option>
+                                        <option value="both">兩邊都要有</option>
+                                    </select>
+                                </div>
+                            </p>
+                        </div>
+                        <div class="field">
+                            <p class="control is-expanded">
+                                <button class="button is-info" @click="send">送出</a>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <section class="section">
+            <div class="container">
+                <h1 class="title">搜尋結果</h1>
+                <div v-if="result">
+                    <!-- 顯示搜尋結果summary -->
+                    <article class="message">
+                        <div class="message-body">
+                            <p>總筆數：[[ result.statistics.total ]]</p>
+                            <p>總不重複作者數：[[ result.statistics.author_type ]]</p>
+                            <p>作者豐富度：[[ result.statistics.author_diversity ]]</p>
+                            <p v-if="selected != 'both'"><em class="yellow">關鍵詞位置平均值：[[ result.statistics.word_position ]]</em></p>
+                        </div>
+                    </article>
+                    <!-- filter: 推/箭頭/噓 -->
+                    <article>
+                        <div class="field">
+                            <label class="label">篩選回覆類型</label>
+                                <input type="checkbox" value="推" v-model="filter_comment">
+                                推
+                                <input type="checkbox" value="→" v-model="filter_comment">
+                                →
+                                <input type="checkbox" value="噓" v-model="filter_comment">
+                                噓
+                        </div>
+                    </article>
+                    <!-- filter: 關鍵詞在句中位置 -->
+                    <article>
+                        <div class="field">
+                            <label class="label">篩選關鍵詞位置起始點 (最小值: 0)</label>
+                            <div class="control">
+                                <input class="input" value="from" v-model="filter_from">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label">篩選關鍵詞在句結束點 (最大值: 1)</label>
+                            <div class="control">
+                                <input class="input" value="to" v-model="filter_to">
+                            </div>
+                        </div>
+                    </article>
+
+                    <!-- filter: 關鍵詞在句中位置 -->
+                    <article>
+                        <h2 class="title">篩選後的總筆數：[[ data_total ]]</h2>
+                    </article>
+
+
+                    <section class="section">
+                        <article class="message" v-for="data in filterSearch">
+                            <p>[[data.post_id]] <a :href="[[article_link(data.post_id)]]">連結</a></p>
+                            <div class="message-body">
+                                <div class="table-container">
+                                    <table class="table">
+                                        <!-- Your table content -->
+                                        <tbody>
+                                            <tr>
+                                                <td>[[data.comment_type]]:</td>
+                                                <td v-html="coloring_keyword(data, 'comment')">
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td></td>
+                                                <td v-html="coloring_keyword(data, 'recomment')">
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </article>
+                    </section>
+                </div>
+            </div>
+        </section>
+    </div>
+    <script>
+    const API_DEV = "http://140.112.147.132:8899/"
+    const API_TEST = "http://127.0.0.1:5001/"
+    const BOARD = "WomenTalk"
+    const PTT_URL = "https://www.ptt.cc/bbs/"
+
+
+    var app = new Vue({
+        el: '#app',
+        delimiters: ['[[', ']]'],
+        data: {
+            query_word: '',
+            selected: 'initiator',
+            result: null,
+            filter_comment: ["推", "→", "噓"],
+            filter_from: 0,
+            filter_to: 1
+        },
+        methods: {
+            send: function() {
+                axios
+                    .get(API_TEST + "query?word=" + this.query_word + "&which_side=" + this.selected)
+                    .then(response => {
+                        this.result = response.data
+                    })
+            },
+
+            coloring_keyword: function(data, type) {
+                result = ''
+                if (type === 'comment') {
+                    result = data.comment_content.split(this.query_word).join("<em>" + this.query_word + "</em>")
+                    if (data.comment_content_position >= 0) {
+                        result += `  <em class="yellow">${data.comment_content_position}</em>`
+                    }
+                } else if (type === 'recomment') {
+                    result = data.recomment_content.split(this.query_word).join("<em>" + this.query_word + "</em>")
+                    if (data.recomment_content_position >= 0) {
+                        result += `。<em class="yellow">${data.recomment_content_position}</em>`
+                    }
+                }
+
+                return result
+
+            },
+            article_link: function(article_id) {
+                return PTT_URL + BOARD + "/" + article_id + ".html"
+            }
+
+        },
+        computed: {
+            highlighted_comment: function() {
+
+            },
+            filterSearch() {
+                if (this.selected === 'initiator') {
+
+                    return this.result.data
+                        .filter(searchResult => this.filter_comment.includes(searchResult.comment_type))
+                        .filter(searchResult => searchResult.comment_content_position >= this.filter_from && searchResult.comment_content_position <= this.filter_to)
+
+                } else if (this.selected === 'replier') {
+                    return this.result.data
+                        .filter(searchResult => this.filter_comment.includes(searchResult.comment_type))
+                        .filter(searchResult => searchResult.recomment_content_position >= this.filter_from && searchResult.recomment_content_position <= this.filter_to)
+                } else {
+                    return this.result.data
+                        .filter(searchResult => this.filter_comment.includes(searchResult.comment_type))
+                }
+
+            },
+            data_total() {
+                return this.filterSearch.length
+            }
+        }
+    });
+    </script>
+</body>
+
+</html>
