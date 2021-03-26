@@ -178,7 +178,7 @@
                 this.delete_chart();
 
                 axios
-                    .get(API_TEST + "query?word=" + this.query_word + "&which_side=" + this.selected)
+                    .get(API_DEV + "query?word=" + this.query_word + "&which_side=" + this.selected)
                     .then(response => {
                         this.result = response.data
                         this.draw();
