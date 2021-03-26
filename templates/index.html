@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.1/css/bulma.min.css">
     <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/0.21.0/axios.min.js"></script>
+    <!-- Load d3.js -->
+    <script src="https://d3js.org/d3.v3.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0"></script>
     <style type="text/css">
     em {
         background-color: black;
@@ -45,6 +48,7 @@
                             <p class="control is-expanded">
                                 <div class="select">
                                     <select v-model="selected">
+                                        <option value="any">所有</option>
                                         <option value="initiator">回文 (first)</option>
                                         <option value="replier">原po的回回文 (second)</option>
                                         <option value="both">兩邊都要有</option>
@@ -64,6 +68,10 @@
         <section class="section">
             <div class="container">
                 <h1 class="title">搜尋結果</h1>
+                <!-- 圖表 -->
+                <div id="proportion_of_position"></div>
+                <canvas id="first_turn_ngram_freq"></canvas>
+                <canvas id="second_turn_ngram_freq"></canvas>
                 <div v-if="result">
                     <!-- 顯示搜尋結果summary -->
                     <article class="message">
@@ -78,16 +86,16 @@
                     <article>
                         <div class="field">
                             <label class="label">篩選回覆類型</label>
-                                <input type="checkbox" value="推" v-model="filter_comment">
-                                推
-                                <input type="checkbox" value="→" v-model="filter_comment">
-                                →
-                                <input type="checkbox" value="噓" v-model="filter_comment">
-                                噓
+                            <input type="checkbox" value="推" v-model="filter_comment">
+                            推
+                            <input type="checkbox" value="→" v-model="filter_comment">
+                            →
+                            <input type="checkbox" value="噓" v-model="filter_comment">
+                            噓
                         </div>
                     </article>
                     <!-- filter: 關鍵詞在句中位置 -->
-                    <article>
+                    <article v-if="selected === 'initator' || selected === 'replier'">
                         <div class="field">
                             <label class="label">篩選關鍵詞位置起始點 (最小值: 0)</label>
                             <div class="control">
@@ -101,13 +109,10 @@
                             </div>
                         </div>
                     </article>
-
                     <!-- filter: 關鍵詞在句中位置 -->
                     <article>
                         <h2 class="title">篩選後的總筆數：[[ data_total ]]</h2>
                     </article>
-
-
                     <section class="section">
                         <article class="message" v-for="data in filterSearch">
                             <p>[[data.post_id]] <a :href="[[article_link(data.post_id)]]">連結</a></p>
@@ -143,6 +148,11 @@
     const PTT_URL = "https://www.ptt.cc/bbs/"
 
 
+    function insertAfter(referenceNode, newNode) {
+        referenceNode.parentNode.insertBefore(newNode, referenceNode.nextSibling);
+    }
+
+
     var app = new Vue({
         el: '#app',
         delimiters: ['[[', ']]'],
@@ -152,15 +162,48 @@
             result: null,
             filter_comment: ["推", "→", "噓"],
             filter_from: 0,
-            filter_to: 1
+            filter_to: 1,
+            sampleData: [{ year: "2006", redDelicious: "0.3", mcintosh: "0.2", oranges: "0.5" }, ]
+        },
+        created() { // 複習一下，這個 hook 將會在 Vue.js 初始化的階段會啟動它
+
+
+
+
         },
         methods: {
             send: function() {
+
+                // 發送新request前先移除圖表
+                this.delete_chart();
+
                 axios
-                    .get(API_DEV + "query?word=" + this.query_word + "&which_side=" + this.selected)
+                    .get(API_TEST + "query?word=" + this.query_word + "&which_side=" + this.selected)
                     .then(response => {
                         this.result = response.data
+                        this.draw();
+
+                        var dd = document.getElementById('proportion_of_position');
+                        var first = document.createElement('canvas');
+                        first.id = 'first_turn_ngram_freq';
+                        insertAfter(dd, first);
+                        var second = document.createElement('canvas');
+                        second.id = 'second_turn_ngram_freq';
+                        insertAfter(first, second);
+
+
+                        if (this.selected === 'initiator') {
+                            this.draw_ngram_chart("first_turn_ngram_freq", this.result.statistics.n_gram_freq_dist_of_utt_containg_keyword)
+                            this.draw_ngram_chart("second_turn_ngram_freq", this.result.statistics.n_gram_freq_dist_of_the_other_utt)
+                        }
+
+                        if (this.selected === 'replier') {
+                            this.draw_ngram_chart("first_turn_ngram_freq", this.result.statistics.n_gram_freq_dist_of_the_other_utt)
+                            this.draw_ngram_chart("second_turn_ngram_freq", this.result.statistics.n_gram_freq_dist_of_utt_containg_keyword)
+                        }
+
                     })
+
             },
 
             coloring_keyword: function(data, type) {
@@ -182,6 +225,255 @@
             },
             article_link: function(article_id) {
                 return PTT_URL + BOARD + "/" + article_id + ".html"
+            },
+            draw() { // 加入剛剛辛苦改好的重繪函式
+                var margin = { top: 20, right: 160, bottom: 35, left: 30 };
+
+                var width = 500 - margin.left - margin.right,
+                    height = 500 - margin.top - margin.bottom;
+
+                var svg = d3.select("#app")
+                    .select("#proportion_of_position")
+                    .append("svg")
+                    .attr("width", width + margin.left + margin.right)
+                    .attr("height", height + margin.top + margin.bottom)
+                    .append("g")
+                    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+                let data = [
+                    this.result.statistics.turn_position_distribution,
+                    this.result.statistics.sentence_position_distribution
+                ];
+                // data[0]['year'] = '2002';
+                // data = this.sampleData;
+                // 若沒有傳入資料，則會使用 Vue.js 實體中的 sampleData
+
+                console.log(data);
+
+                // var parse = d3.time.format("%Y").parse;
+                var x_bar_title = ["關鍵詞於話輪中位置", "關鍵詞於句中位置"]
+                var x_bar_theme = ["turn", "sentence"]
+
+
+                // Transpose the data into layers
+                var dataset = d3.layout.stack()(["initial", "middle", "end"].map(function(fruit) {
+                    return data.map(function(d, i) {
+                        return { x: x_bar_title[i], y: +d[fruit], tag: `${x_bar_theme[i]}_${fruit}` };
+                    });
+                }));
+
+
+                // Set x, y and colors
+                var x = d3.scale.ordinal()
+                    .domain(dataset[0].map(function(d) { return d.x; }))
+                    .rangeRoundBands([10, width - 10], 0.02);
+
+                var y = d3.scale.linear()
+                    .domain([0, d3.max(dataset, function(d) { return d3.max(d, function(d) { return d.y0 + d.y; }); })])
+                    .range([height, 0]);
+
+                var colors = ["b33040", "#d25c4d", "#f2b447"];
+
+
+                // Define and draw axes
+                var yAxis = d3.svg.axis()
+                    .scale(y)
+                    .orient("left")
+                    .ticks(5)
+                    .tickSize(-width, 0, 0)
+                    .tickFormat(function(d) { return d });
+
+                var xAxis = d3.svg.axis()
+                    .scale(x)
+                    .orient("bottom");
+
+                svg.append("g")
+                    .attr("class", "y axis")
+                    .call(yAxis);
+
+                svg.append("g")
+                    .attr("class", "x axis")
+                    .attr("transform", "translate(0," + height + ")")
+                    .call(xAxis);
+
+
+                // Create groups for each series, rects for each segment 
+                var groups = svg.selectAll("g.cost")
+                    .data(dataset)
+                    .enter().append("g")
+                    .attr("class", "cost")
+                    .style("fill", function(d, i) { return colors[i]; });
+
+                var rect = groups.selectAll("rect")
+                    .data(function(d) { return d; })
+                    .enter()
+                    .append("rect")
+                    .attr("x", function(d) { return x(d.x); })
+                    .attr("y", function(d) { return y(d.y0 + d.y); })
+                    .attr("height", function(d) { return y(d.y0) - y(d.y0 + d.y); })
+                    .attr("width", x.rangeBand())
+                    .on("mouseover", function() { tooltip.style("display", null); })
+                    .on("mouseout", function() { tooltip.style("display", "none"); })
+                    .on("mousemove", function(d) {
+                        var xPosition = d3.mouse(this)[0] - 15;
+                        var yPosition = d3.mouse(this)[1] - 25;
+                        tooltip.attr("transform", "translate(" + xPosition + "," + yPosition + ")");
+                        tooltip.select("text").text(d.y);
+
+                    })
+                    .on("click", function(e) {
+                        console.log(e)
+                    });
+
+
+                // Draw legend
+                var legend = svg.selectAll(".legend")
+                    .data(colors)
+                    .enter().append("g")
+                    .attr("class", "legend")
+                    .attr("transform", function(d, i) { return "translate(30," + i * 19 + ")"; });
+
+                legend.append("rect")
+                    .attr("x", width - 18)
+                    .attr("width", 18)
+                    .attr("height", 18)
+                    .style("fill", function(d, i) { return colors.slice().reverse()[i]; });
+
+                legend.append("text")
+                    .attr("x", width + 5)
+                    .attr("y", 9)
+                    .attr("dy", ".35em")
+                    .style("text-anchor", "start")
+                    .text(function(d, i) {
+                        switch (i) {
+                            case 0:
+                                return "末 (>= 0.7)";
+                            case 1:
+                                return "中 (0.3 ~ 0.7)";
+                            case 2:
+                                return "首 (<= 0.3)";
+                        }
+                    });
+
+
+                // Prep the tooltip bits, initial display is hidden
+                var tooltip = svg.append("g")
+                    .attr("class", "tooltip")
+                    .style("display", "none");
+
+                tooltip.append("rect")
+                    .attr("width", 30)
+                    .attr("height", 20)
+                    .attr("fill", "white")
+                    .style("opacity", 0.5);
+
+                tooltip.append("text")
+                    .attr("x", 15)
+                    .attr("dy", "1.2em")
+                    .style("text-anchor", "middle")
+                    .attr("font-size", "12px")
+                    .attr("font-weight", "bold");
+
+            },
+            draw_ngram_chart(div_id, data) {
+
+                var title = div_id.startsWith('first') ? '第一輪（回文）中的ngram' : '第二輪（回回文）中的ngram' ;
+
+
+                var ctx = document.getElementById(div_id).getContext('2d');
+                var chart = new Chart(ctx, {
+                    // The type of chart we want to create
+                    type: 'bar',
+
+                    // The data for our dataset
+                    data: {
+                        labels: data.map(function(d) { return d.ngram }),
+                        datasets: [{
+                            label: 'My First dataset',
+                            backgroundColor: 'rgb(255, 99, 132)',
+                            borderColor: 'rgb(255, 99, 132)',
+                            data: data.map(function(d) { return d.freq })
+                        }]
+                    },
+
+                    // Configuration options go here
+                    options: {
+                        title: {
+                            display: true,
+                            text: title
+                        }
+                    }
+                });
+                // var margin = {
+                //     top: 20,
+                //     right: 20,
+                //     bottom: 30,
+                //     left: 40
+                // };
+                // var width = 960 - margin.left - margin.right;
+                // var height = 500 - margin.top - margin.bottom;
+
+                // var svg = d3.select("#app")
+                //     .select('#' + div_id)
+                //     .append("svg")
+                //     .attr("width", width + margin.left + margin.right)
+                //     .attr("height", height + margin.top + margin.bottom)
+                //     .append("g")
+                //     .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+                // var x = d3.scale.linear()
+                //     .range([0, width]);
+
+                // var y = d3.scale.ordinal()
+                //     .range([height, 0]);
+
+
+                // var yAxis = d3.svg.axis(y);
+
+                // // let data = this.result.statistics.n_gram_freq_dist_of_utt_containg_keyword
+
+                // data.sort(function(a, b) {
+                //         return a.freq - b.freq;
+                //     });
+
+                //     x.domain([0, d3.max(data, function(d) { return d.freq; })]);
+
+                //     y.domain(data.map(function(d) { return d.ngram; }))
+                //         .range([0, 0.1])
+                //         // .paddingInner(0.1);
+
+
+                //     svg.append("g")
+                //         .attr("class", "x axis")
+                //         .attr("transform", "translate(0," + height + ")")
+                //         .call(d3.axis(x));
+
+                //     svg.append("g")
+                //         .attr("class", "y axis")
+                //         .call(yAxis);
+
+                //     svg.selectAll(".bar")
+                //         .data(data)
+                //         .enter().append("rect")
+                //         .attr("class", "bar")
+                //         .attr("x", 0)
+                //         .attr("height", y.rangeBand())
+                //         .attr("y", function(d) { return y(d.ngram); })
+                //         .attr("width", function(d) { return x(d.freq); });
+
+
+                // function type(d) {
+                //     d.freq = +d.freq;
+                //     return d;
+                // }
+            },
+            delete_chart() {
+                var svg = d3.select("#app")
+                    .select("#proportion_of_position")
+                svg.selectAll("*").remove();
+
+                document.getElementById("first_turn_ngram_freq").remove();
+                document.getElementById("second_turn_ngram_freq").remove();
             }
 
         },
@@ -209,7 +501,15 @@
             data_total() {
                 return this.filterSearch.length
             }
-        }
+        },
+        // mounted() {
+        //     // this.draw(); // 等到 Vue.js 一載入完成就執行這個繪圖函式
+        // },
+        // watch: {
+        //     // sampleData: function() {
+        //     //     this.draw(this.sampleData);
+        //     // }
+        // }
     });
     </script>
 </body>
